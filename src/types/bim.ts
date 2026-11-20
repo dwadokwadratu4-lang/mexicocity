@@ -56,6 +56,7 @@ export interface BimObject {
   budowlane: DateRange;
   technologiczne: DateRange;
   elektryczne: DateRange;
+  demontaz?: string;
 }
 
 export interface HarmonogramData {

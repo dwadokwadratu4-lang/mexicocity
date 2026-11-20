@@ -30,26 +30,39 @@ export function calcRangeProgress(currentMs: number, range: DateRange): number {
   return (currentMs - startMs) / (endMs - startMs);
 }
 
-/**
- * Identifies key technological units that receive the global Hot Commissioning (Rozruch Goracy) indicator.
- */
-export function isMajorTechObject(obj: BimObject): boolean {
-  if (obj.typ === 'chimney') return true;
-  if (obj.h >= 2.0) return true;
-  if (obj.w * obj.d >= 2.0) return true;
-  return false;
-}
-
 export function evaluateObjectState(
   obj: BimObject,
   currentMs: number,
   data: HarmonogramData,
 ): ObjectProgressState {
+  // Temporary objects (e.g. BIURO) are dismantled when demontaz date is reached
+  if (obj.demontaz && currentMs >= parseDateMs(obj.demontaz)) {
+    return {
+      budPct: 0,
+      techPct: 0,
+      elecPct: 0,
+      overallPct: 0,
+      hasStarted: false,
+      commissioning: 'none',
+    };
+  }
+
   const budPct = calcRangeProgress(currentMs, obj.budowlane);
   const techPct = calcRangeProgress(currentMs, obj.technologiczne);
   const elecPct = calcRangeProgress(currentMs, obj.elektryczne);
   const overallPct = (budPct + techPct + elecPct) / 3;
   const hasStarted = budPct > 0 || techPct > 0 || elecPct > 0;
+
+  if (obj.id === 'BIURO') {
+    return {
+      budPct,
+      techPct,
+      elecPct,
+      overallPct,
+      hasStarted,
+      commissioning: 'none',
+    };
+  }
 
   const coldDays = data.projekt.rozruchZimnyDni ?? 14;
   const allDoneMs = Math.max(
@@ -75,11 +88,7 @@ export function evaluateObjectState(
     currentMs <= coldEndMs
   ) {
     commissioning = 'rozruch_zimny';
-  } else if (
-    currentMs >= hotStartMs &&
-    currentMs < hotEndMs &&
-    isMajorTechObject(obj)
-  ) {
+  } else if (currentMs >= hotStartMs && currentMs < hotEndMs) {
     commissioning = 'rozruch_goracy';
   }
 

@@ -65,7 +65,7 @@
     {
       "id": "M-03",
       "typ": "building",
-      "x": 15.0, "z": -3.0, "w": 2.0, "d": 3.0, "h": 0.5,
+      "x": 15.0, "z": 0.5, "w": 2.0, "d": 3.0, "h": 0.5,
       "budowlane": { "start": "2027-01-15", "koniec": "2027-01-22" },
       "technologiczne": { "start": "2027-01-25", "koniec": "2027-02-05" },
       "elektryczne": { "start": "2026-11-09", "koniec": "2027-02-09" }
@@ -144,7 +144,7 @@
     },
     {
       "id": "M-13",
-      "typ": "container",
+      "typ": "building",
       "x": 0.5, "z": 1.0, "w": 1.0, "d": 2.0, "h": 1.0,
       "budowlane": { "start": "2027-01-15", "koniec": "2027-05-15" },
       "technologiczne": { "start": "2027-06-01", "koniec": "2027-08-15" },
@@ -176,7 +176,7 @@
     },
     {
       "id": "M-17",
-      "typ": "container",
+      "typ": "building",
       "x": -6.5, "z": 1.0, "w": 3.0, "d": 2.0, "h": 1.0,
       "budowlane": { "start": "2027-02-01", "koniec": "2027-06-15" },
       "technologiczne": { "start": "2027-06-16", "koniec": "2027-09-10" },
@@ -253,6 +253,15 @@
       "budowlane": { "start": "2027-01-22", "koniec": "2027-02-26" },
       "technologiczne": { "start": "2027-02-27", "koniec": "2027-04-20" },
       "elektryczne": { "start": "2027-01-25", "koniec": "2027-06-17" }
+    },
+    {
+      "id": "BIURO",
+      "typ": "container",
+      "x": 13.2, "z": 3.0, "w": 2.0, "d": 1.0, "h": 0.5,
+      "budowlane": { "start": "2026-09-22", "koniec": "2026-09-22" },
+      "technologiczne": { "start": "2026-09-22", "koniec": "2026-09-22" },
+      "elektryczne": { "start": "2026-09-22", "koniec": "2026-09-22" },
+      "demontaz": "2028-03-08"
     }
   ]
 }

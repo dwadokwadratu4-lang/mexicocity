@@ -1,18 +1,22 @@
-import { QrCode } from 'lucide-react';
+import { QrCode, Volume2, VolumeX } from 'lucide-react';
 import type { ViewMode } from '../types/bim';
 
 interface TopBarProps {
   currentDateStr: string;
   viewMode: ViewMode;
+  isMuted: boolean;
   onChangeViewMode: (mode: ViewMode) => void;
   onOpenHiroModal: () => void;
+  onToggleMute: () => void;
 }
 
 export function TopBar({
   currentDateStr,
   viewMode,
+  isMuted,
   onChangeViewMode,
   onOpenHiroModal,
+  onToggleMute,
 }: TopBarProps) {
   return (
     <header className="fixed top-0 left-0 right-0 z-30 h-13 px-3 sm:px-5 bg-slate-950/92 border-b border-white/10 flex items-center justify-between gap-2">
@@ -60,6 +64,24 @@ export function TopBar({
             3D
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={onToggleMute}
+          aria-label={isMuted ? 'Włącz dźwięki' : 'Wycisz dźwięki'}
+          title={isMuted ? 'Włącz dźwięki' : 'Wycisz dźwięki'}
+          className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-lg border transition-colors shrink-0 ${
+            isMuted
+              ? 'bg-slate-900 border-white/10 text-slate-500 hover:text-slate-300'
+              : 'bg-slate-900 border-white/10 text-amber-400 hover:bg-slate-800'
+          }`}
+        >
+          {isMuted ? (
+            <VolumeX className="w-4 h-4" />
+          ) : (
+            <Volume2 className="w-4 h-4" />
+          )}
+        </button>
 
         <button
           type="button"

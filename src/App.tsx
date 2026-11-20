@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Compass, QrCode, RotateCcw } from 'lucide-react';
 import { AREngine, type ARTrackingStatus } from './ar/AREngine';
+import { SoundEngine } from './audio/SoundEngine';
 import { ControlDock } from './components/ControlDock';
 import { HiroMarkerModal } from './components/HiroMarkerModal';
 import { ObjectInspectorCard } from './components/ObjectInspectorCard';
@@ -43,15 +44,36 @@ export default function App() {
     Record<string, HandoverOverride>
   >({});
   const [showHiroModal, setShowHiroModal] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
 
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<AREngine | null>(null);
+  const soundRef = useRef<SoundEngine | null>(null);
   const lastVibrateRef = useRef<number>(0);
 
   // Direct DOM refs for 60fps floating 3D object labels (zero React re-renders per frame)
   const labelContainerRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const labelTextRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+
+  // Initialize & unlock Web Audio API on first user gesture
+  useEffect(() => {
+    const sound = new SoundEngine();
+    soundRef.current = sound;
+
+    const unlock = () => sound.unlock();
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('touchstart', unlock, { passive: true });
+    window.addEventListener('keydown', unlock, { passive: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('touchstart', unlock);
+      window.removeEventListener('keydown', unlock);
+      sound.dispose();
+      soundRef.current = null;
+    };
+  }, []);
 
   // 1. Load external /harmonogram.json
   useEffect(() => {
@@ -90,6 +112,18 @@ export default function App() {
     }
   }, []);
 
+  const handleWorkStart = useCallback(() => {
+    soundRef.current?.playChime();
+  }, []);
+
+  const handleVehicleTap = useCallback(() => {
+    soundRef.current?.playCarHorn();
+  }, []);
+
+  const handleOfficeTap = useCallback(() => {
+    soundRef.current?.playPoliceSiren();
+  }, []);
+
   const handleLabelsUpdate = useCallback((coords: ScreenLabelCoord[]) => {
     for (let i = 0; i < coords.length; i++) {
       const c = coords[i];
@@ -105,7 +139,7 @@ export default function App() {
       el.style.pointerEvents = 'auto';
       el.style.transform = `translate3d(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px, 0) translate(-50%, -110%)`;
       if (txt) {
-        txt.textContent = `${c.id} · ${c.overallPct}%`;
+        txt.textContent = c.id === 'BIURO' ? 'BIURO' : `${c.id} · ${c.overallPct}%`;
       }
     }
   }, []);
@@ -136,6 +170,9 @@ export default function App() {
         },
         onLabelsUpdate: handleLabelsUpdate,
         onObjectDrop: handleObjectDrop,
+        onWorkStart: handleWorkStart,
+        onVehicleTap: handleVehicleTap,
+        onOfficeTap: handleOfficeTap,
       },
     );
 
@@ -144,7 +181,14 @@ export default function App() {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [data, handleLabelsUpdate, handleObjectDrop]);
+  }, [
+    data,
+    handleLabelsUpdate,
+    handleObjectDrop,
+    handleWorkStart,
+    handleVehicleTap,
+    handleOfficeTap,
+  ]);
 
   // 3. Sync schedule date to 3D scene
   useEffect(() => {
@@ -174,7 +218,7 @@ export default function App() {
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
       setCurrentMs((prev) => {
-        const next = prev + dt * 55 * DAY_MS; // ~55 days per second
+        const next = prev + dt * 55 * DAY_MS;
         if (next >= endMs) {
           setIsPlaying(false);
           return endMs;
@@ -186,6 +230,13 @@ export default function App() {
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [isPlaying, data]);
+
+  const handleToggleMute = () => {
+    soundRef.current?.unlock();
+    const next = !isMuted;
+    setIsMuted(next);
+    soundRef.current?.setMuted(next);
+  };
 
   const handleChangeViewMode = (mode: ViewMode) => {
     setViewMode(mode);
@@ -203,8 +254,13 @@ export default function App() {
   };
 
   const handleSelectFromLabel = (id: string) => {
+    soundRef.current?.unlock();
     setSelectedObjectId(id);
     engineRef.current?.selectObject(id);
+    if (id === 'BIURO') {
+      engineRef.current?.triggerOfficeAlarm('BIURO');
+      soundRef.current?.playPoliceSiren();
+    }
   };
 
   const handleCloseInspector = () => {
@@ -280,7 +336,7 @@ export default function App() {
         }`}
       />
 
-      {/* Dedicated WebGL Mount Container (never unmounted by React HUD changes) */}
+      {/* Dedicated WebGL Mount Container */}
       <div
         ref={canvasHostRef}
         className="absolute inset-0 overflow-hidden"
@@ -290,8 +346,10 @@ export default function App() {
       <TopBar
         currentDateStr={currentDateStr}
         viewMode={viewMode}
+        isMuted={isMuted}
         onChangeViewMode={handleChangeViewMode}
         onOpenHiroModal={() => setShowHiroModal(true)}
+        onToggleMute={handleToggleMute}
       />
 
       {/* 3D Floating Code + % Labels Overlay */}
@@ -309,7 +367,9 @@ export default function App() {
               className={`absolute top-0 left-0 px-2 py-1 rounded-lg border text-[11px] font-mono tabular-nums font-semibold shadow-md transition-opacity duration-75 whitespace-nowrap ${
                 selectedObjectId === obj.id
                   ? 'bg-amber-500 border-white text-slate-950'
-                  : 'bg-slate-950/90 border-white/25 text-white hover:border-amber-400'
+                  : obj.id === 'BIURO'
+                    ? 'bg-sky-950/90 border-sky-400/60 text-sky-100 hover:border-amber-400'
+                    : 'bg-slate-950/90 border-white/25 text-white hover:border-amber-400'
               }`}
             >
               <span
@@ -317,14 +377,14 @@ export default function App() {
                   labelTextRefs.current[obj.id] = el;
                 }}
               >
-                {obj.id} · 0%
+                {obj.id === 'BIURO' ? 'BIURO' : `${obj.id} · 0%`}
               </span>
             </button>
           ))}
         </div>
       )}
 
-      {/* AR HIRO Search Reticle (shown only while waiting for marker) */}
+      {/* AR HIRO Search Reticle */}
       {viewMode === 'ar' &&
         (arStatus === 'searching_hiro' || arStatus === 'initializing_camera') && (
           <div className="fixed inset-0 z-20 pointer-events-none flex flex-col items-center justify-center px-6 pb-28">
@@ -427,6 +487,7 @@ export default function App() {
           setCurrentMs(ms);
         }}
         onTogglePlay={() => {
+          soundRef.current?.unlock();
           const endMs = parseDateMs(data.projekt.dataKoniec);
           if (currentMs >= endMs) {
             setCurrentMs(parseDateMs(data.projekt.dataStart));

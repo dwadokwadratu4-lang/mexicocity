@@ -37,11 +37,9 @@ function createVoxelGridTexture(widthUnits: number, depthUnits: number): THREE.C
   canvas.height = depthUnits * pxPerUnit;
   const ctx = canvas.getContext('2d')!;
 
-  // Base construction gravel / soil tone
   ctx.fillStyle = '#474f48';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Subtle voxel tile variation
   for (let gx = 0; gx < widthUnits; gx++) {
     for (let gz = 0; gz < depthUnits; gz++) {
       const checker = (gx + gz) % 2 === 0;
@@ -50,7 +48,6 @@ function createVoxelGridTexture(widthUnits: number, depthUnits: number): THREE.C
     }
   }
 
-  // Crisp 1-unit grid lines
   ctx.strokeStyle = 'rgba(226, 232, 240, 0.14)';
   ctx.lineWidth = 1;
   for (let gx = 0; gx <= widthUnits; gx++) {
@@ -77,11 +74,13 @@ function createVoxelGridTexture(widthUnits: number, depthUnits: number): THREE.C
 
 interface VehicleSim {
   group: THREE.Group;
+  headLightMat: THREE.MeshStandardMaterial;
   mode: 'municipal' | 'internal_loop' | 'internal_spur';
   progress: number;
   speed: number;
   direction: 1 | -1;
   laneOffset: number;
+  hornFlashRemaining: number;
 }
 
 export interface BuildingEntry {
@@ -91,6 +90,7 @@ export interface BuildingEntry {
   shellGroup: THREE.Group;
   shellMeshes: THREE.Mesh[];
   shellMaterial: THREE.MeshStandardMaterial;
+  baseShellColor: number;
   edgeMaterial: THREE.LineBasicMaterial;
   techColumn: THREE.Mesh;
   elecColumn: THREE.Mesh;
@@ -102,8 +102,15 @@ export interface BuildingEntry {
   redArrow: THREE.Group;
   greenBeacon: THREE.Group;
   wasStarted: boolean;
+  wasBudStarted: boolean;
+  wasTechStarted: boolean;
+  wasElecStarted: boolean;
   dropActive: boolean;
   dropElapsed: number;
+  lastCommissioning: CommissioningPhase;
+  arrowDropActive: boolean;
+  arrowDropElapsed: number;
+  flashRemaining: number;
   lastState: ObjectProgressState;
 }
 
@@ -132,8 +139,8 @@ export class BimSiteScene {
   private currentOpacity = 0.7;
   private selectedId: string | null = null;
   private onDropCallback?: () => void;
+  private onWorkStartCallback?: () => void;
 
-  // Internal loop waypoints for DROGA_WEWNETRZNA
   private readonly loopWaypoints: THREE.Vector2[] = [
     new THREE.Vector2(-9.5, -5.5),
     new THREE.Vector2(11.5, -5.5),
@@ -145,9 +152,11 @@ export class BimSiteScene {
     data: HarmonogramData,
     maxAnisotropy: number,
     onObjectDrop?: () => void,
+    onWorkStart?: () => void,
   ) {
     this.data = data;
     this.onDropCallback = onObjectDrop;
+    this.onWorkStartCallback = onWorkStart;
     this.root = new THREE.Group();
     this.vehicleGroup = new THREE.Group();
 
@@ -165,10 +174,9 @@ export class BimSiteScene {
   }
 
   private buildTerrain(maxAnisotropy: number) {
-    const w = this.data.teren.siatkaSzerokosc; // 40
-    const d = this.data.teren.siatkaGlebokosc; // 18
+    const w = this.data.teren.siatkaSzerokosc;
+    const d = this.data.teren.siatkaGlebokosc;
 
-    // Outer forest meadow base so voxel trees sit on solid ground
     const outerGeo = this.track(new THREE.BoxGeometry(w + 18, 0.24, d + 16));
     const outerMat = this.track(
       new THREE.MeshStandardMaterial({
@@ -182,7 +190,6 @@ export class BimSiteScene {
     outerBase.receiveShadow = true;
     this.root.add(outerBase);
 
-    // Main 40 x 18 construction grid slab
     const gridTex = this.track(createVoxelGridTexture(w, d));
     gridTex.anisotropy = maxAnisotropy;
 
@@ -215,11 +222,8 @@ export class BimSiteScene {
   }
 
   private buildVoxelForest() {
-    // Generate deterministic dense Wordcraft / Voxel forest outside the fence
-    // Fence encloses roughly x: [-19.0, 16.6], z: [-8.6, 8.6], plus municipal road at x: [17.0, 19.0]
     const treePositions: Array<{ x: number; z: number; scale: number; tint: number }> = [];
 
-    // Simple deterministic PRNG so forest looks identical every session
     let seed = 42197;
     const rand = () => {
       seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -227,20 +231,16 @@ export class BimSiteScene {
     };
 
     const isInsideProtectedZone = (x: number, z: number) => {
-      // Inside fenced site compound
       if (x >= -19.6 && x <= 19.8 && z >= -9.3 && z <= 9.3) return true;
-      // Keep municipal road north/south approach slightly clear
       if (x >= 16.4 && x <= 19.6 && Math.abs(z) <= 10.2) return true;
       return false;
     };
 
-    // Grid-jittered placement around the entire perimeter ring
     for (let gx = -27; gx <= 27; gx += 1.65) {
       for (let gz = -15.5; gz <= 15.5; gz += 1.65) {
         const jx = gx + (rand() - 0.5) * 0.9;
         const jz = gz + (rand() - 0.5) * 0.9;
         if (isInsideProtectedZone(jx, jz)) continue;
-        // Skip occasional spot for natural woodland clusters
         if (rand() < 0.16) continue;
         treePositions.push({
           x: jx,
@@ -254,7 +254,6 @@ export class BimSiteScene {
     const count = treePositions.length;
     if (count === 0) return;
 
-    // 1. Timber trunks (voxel cubes/columns)
     const trunkGeo = this.track(new THREE.BoxGeometry(0.38, 1.0, 0.38));
     trunkGeo.translate(0, 0.5, 0);
     const trunkMat = this.track(
@@ -268,7 +267,6 @@ export class BimSiteScene {
     trunks.castShadow = true;
     trunks.receiveShadow = true;
 
-    // 2. Lower voxel foliage cubes
     const cubeLeafGeo = this.track(new THREE.BoxGeometry(1.25, 1.05, 1.25));
     cubeLeafGeo.translate(0, 1.4, 0);
     const leafMat = this.track(
@@ -282,7 +280,6 @@ export class BimSiteScene {
     cubeLeaves.castShadow = true;
     cubeLeaves.receiveShadow = true;
 
-    // 3. Upper voxel pyramid caps (4-sided ConeGeometry = square pyramid / ostrosłup)
     const pyramidGeo = this.track(new THREE.ConeGeometry(0.92, 1.35, 4));
     pyramidGeo.rotateY(Math.PI / 4);
     pyramidGeo.translate(0, 2.45, 0);
@@ -307,7 +304,6 @@ export class BimSiteScene {
       const paletteHex = greens[Math.floor(p.tint * greens.length) % greens.length];
       color.setHex(paletteHex);
       cubeLeaves.setColorAt(i, color);
-      // Slightly brighter crown pyramid
       color.offsetHSL(0, 0.02, 0.05);
       pyramidLeaves.setColorAt(i, color);
     });
@@ -326,7 +322,7 @@ export class BimSiteScene {
   }
 
   private buildFence() {
-    const h = this.data.teren.ogrodzenie.wysokosc; // 0.5
+    const h = this.data.teren.ogrodzenie.wysokosc;
     const fenceMat = this.track(
       new THREE.MeshStandardMaterial({
         color: 0xcbd5e1,
@@ -346,14 +342,9 @@ export class BimSiteScene {
       this.fenceSegments.push(mesh);
     };
 
-    // Compound fence spans: x in [-18.8, 16.6], z in [-8.6, 8.6]
-    // North edge (z = -8.6)
     addFenceSpan(-1.1, -8.6, 35.4, 0.16);
-    // South edge (z = +8.6)
     addFenceSpan(-1.1, 8.6, 35.4, 0.16);
-    // West edge (x = -18.8)
     addFenceSpan(-18.8, 0, 0.16, 17.2);
-    // East edge (x = 16.6) with gate gap at z in [-2.2, -0.8] for DROGA_WEWNETRZNA
     addFenceSpan(16.6, -5.4, 0.16, 6.4);
     addFenceSpan(16.6, 3.9, 0.16, 9.4);
   }
@@ -361,7 +352,7 @@ export class BimSiteScene {
   private buildRoads() {
     const roadMat = this.track(
       new THREE.MeshStandardMaterial({
-        color: 0x374151, // Dark asphalt gray
+        color: 0x374151,
         roughness: 0.88,
         metalness: 0.06,
       }),
@@ -378,7 +369,7 @@ export class BimSiteScene {
     );
 
     for (const road of this.data.teren.drogi) {
-      const h = road.wysokosc; // 0.25
+      const h = road.wysokosc;
       for (const seg of road.segmenty) {
         const geo = this.track(new THREE.BoxGeometry(seg.w, h, seg.d));
         geo.translate(0, h / 2, 0);
@@ -390,7 +381,6 @@ export class BimSiteScene {
         this.root.add(mesh);
         this.roadSegments.push(mesh);
 
-        // Dashed lane markings along longer axis
         const alongX = seg.w >= seg.d;
         const length = alongX ? seg.w : seg.d;
         const dashCount = Math.max(1, Math.floor(length / 1.4));
@@ -414,7 +404,10 @@ export class BimSiteScene {
     }
   }
 
-  private createVoxelVehicle(bodyColorHex: number): THREE.Group {
+  private createVoxelVehicle(
+    bodyColorHex: number,
+    vehicleIndex: number,
+  ): { group: THREE.Group; headLightMat: THREE.MeshStandardMaterial } {
     const group = new THREE.Group();
 
     const bodyMat = this.track(
@@ -454,7 +447,6 @@ export class BimSiteScene {
       }),
     );
 
-    // Chassis (long axis along +Z forward)
     const chassis = new THREE.Mesh(
       this.track(new THREE.BoxGeometry(0.42, 0.18, 0.78)),
       bodyMat,
@@ -463,7 +455,6 @@ export class BimSiteScene {
     chassis.castShadow = true;
     group.add(chassis);
 
-    // Cabin roof
     const cab = new THREE.Mesh(
       this.track(new THREE.BoxGeometry(0.36, 0.15, 0.38)),
       cabMat,
@@ -472,7 +463,6 @@ export class BimSiteScene {
     cab.castShadow = true;
     group.add(cab);
 
-    // 4 Voxel Wheels
     const wheelGeo = this.track(new THREE.BoxGeometry(0.08, 0.12, 0.16));
     const wheelCoords: Array<[number, number]> = [
       [-0.21, 0.24],
@@ -486,7 +476,6 @@ export class BimSiteScene {
       group.add(wheel);
     }
 
-    // Headlights (+Z front)
     const lightGeo = this.track(new THREE.BoxGeometry(0.09, 0.06, 0.04));
     for (const lx of [-0.13, 0.13]) {
       const hl = new THREE.Mesh(lightGeo, headLightMat);
@@ -498,13 +487,22 @@ export class BimSiteScene {
       group.add(tl);
     }
 
-    return group;
+    // Generous invisible touch hit-box for tapping moving cars on mobile
+    const hitGeo = this.track(new THREE.BoxGeometry(1.05, 0.75, 1.3));
+    hitGeo.translate(0, 0.32, 0);
+    const hitMat = this.track(new THREE.MeshBasicMaterial({ visible: false }));
+    const hitBox = new THREE.Mesh(hitGeo, hitMat);
+    hitBox.userData.kind = 'vehicle';
+    hitBox.userData.vehicleIndex = vehicleIndex;
+    group.add(hitBox);
+    this.clickableMeshes.push(hitBox);
+
+    return { group, headLightMat };
   }
 
   private buildVehicles() {
     this.root.add(this.vehicleGroup);
 
-    // Municipal road vehicles (DROGA_MIEJSKA at x = 18.0)
     const municipalSpecs: Array<{
       color: number;
       progress: number;
@@ -517,16 +515,18 @@ export class BimSiteScene {
       { color: 0xe11d48, progress: 0.4, speed: 0.18, direction: -1, laneOffset: 0.45 },
     ];
     for (const spec of municipalSpecs) {
-      const mesh = this.createVoxelVehicle(spec.color);
-      this.vehicleGroup.add(mesh);
+      const idx = this.vehicles.length;
+      const { group, headLightMat } = this.createVoxelVehicle(spec.color, idx);
+      this.vehicleGroup.add(group);
       this.vehicles.push({
-        group: mesh,
+        group,
+        headLightMat,
         mode: 'municipal',
         ...spec,
+        hornFlashRemaining: 0,
       });
     }
 
-    // Internal site loop vehicles (DROGA_WEWNETRZNA)
     const internalSpecs: Array<{
       color: number;
       mode: 'internal_loop' | 'internal_spur';
@@ -538,15 +538,18 @@ export class BimSiteScene {
       { color: 0x38bdf8, mode: 'internal_spur', progress: 0.2, speed: 0.22 },
     ];
     for (const spec of internalSpecs) {
-      const mesh = this.createVoxelVehicle(spec.color);
-      this.vehicleGroup.add(mesh);
+      const idx = this.vehicles.length;
+      const { group, headLightMat } = this.createVoxelVehicle(spec.color, idx);
+      this.vehicleGroup.add(group);
       this.vehicles.push({
-        group: mesh,
+        group,
+        headLightMat,
         mode: spec.mode,
         progress: spec.progress,
         speed: spec.speed,
         direction: 1,
         laneOffset: 0,
+        hornFlashRemaining: 0,
       });
     }
   }
@@ -563,7 +566,6 @@ export class BimSiteScene {
       }),
     );
 
-    // Downward pointing arrowhead (pyramid flipped upside down)
     const headGeo = this.track(new THREE.ConeGeometry(0.32, 0.45, 4));
     headGeo.rotateX(Math.PI);
     headGeo.rotateY(Math.PI / 4);
@@ -571,7 +573,6 @@ export class BimSiteScene {
     head.position.y = 0.22;
     group.add(head);
 
-    // Vertical shaft
     const shaftGeo = this.track(new THREE.BoxGeometry(0.18, 0.42, 0.18));
     const shaft = new THREE.Mesh(shaftGeo, mat);
     shaft.position.y = 0.62;
@@ -592,7 +593,6 @@ export class BimSiteScene {
       }),
     );
 
-    // Stylized voxel checkmark / diamond badge
     const shortArm = new THREE.Mesh(
       this.track(new THREE.BoxGeometry(0.16, 0.34, 0.16)),
       mat,
@@ -641,21 +641,20 @@ export class BimSiteScene {
       }),
     );
 
-    const colGeo = this.track(new THREE.BoxGeometry(0.47, 1, 0.47));
+    // 0.46 x 0.46 interior columns (normalized height 1.0, bottom at y = 0)
+    const colGeo = this.track(new THREE.BoxGeometry(0.46, 1, 0.46));
     colGeo.translate(0, 0.5, 0);
 
     for (const obj of this.data.obiekty) {
       const objRoot = new THREE.Group();
       objRoot.position.set(obj.x, 0, obj.z);
 
-      // Subtle planned footprint pad
       const fpGeo = this.track(new THREE.PlaneGeometry(obj.w * 0.98, obj.d * 0.98));
       fpGeo.rotateX(-Math.PI / 2);
       const footprintMesh = new THREE.Mesh(fpGeo, footprintMat);
       footprintMesh.position.y = 0.012;
       objRoot.add(footprintMesh);
 
-      // Selection highlight ring around base
       const hw = obj.w / 2 + 0.12;
       const hd = obj.d / 2 + 0.12;
       const ringGeo = this.track(
@@ -673,14 +672,19 @@ export class BimSiteScene {
       selectionRing.visible = false;
       objRoot.add(selectionRing);
 
-      // Animated drop group
       const dropGroup = new THREE.Group();
       objRoot.add(dropGroup);
 
-      // Warm beige outer shell material (unique per object so opacity updates cleanly)
+      const isOffice = obj.id === 'BIURO';
+      const baseShellColor = isOffice
+        ? 0xe2e8f0
+        : obj.typ === 'container'
+          ? 0xd9cbb5
+          : 0xe4d5bc;
+
       const shellMaterial = this.track(
         new THREE.MeshStandardMaterial({
-          color: obj.typ === 'container' ? 0xd9cbb5 : 0xe4d5bc,
+          color: baseShellColor,
           roughness: 0.72,
           metalness: 0.05,
           transparent: true,
@@ -700,16 +704,16 @@ export class BimSiteScene {
       const shellMeshes: THREE.Mesh[] = [];
 
       if (obj.typ === 'container') {
-        // Modular cubes with crisp container seams
+        // Modular container cubes normalized so total unscaled height of shellGroup = 1.0
         const nx = Math.max(1, Math.round(obj.w));
         const nz = Math.max(1, Math.round(obj.d));
         const unitW = obj.w / nx;
         const unitD = obj.d / nz;
         const ny = obj.h >= 1.0 ? Math.round(obj.h / 0.5) : 1;
-        const unitH = obj.h / ny;
+        const normUnitH = 1.0 / ny;
 
         const modGeo = this.track(
-          new THREE.BoxGeometry(unitW * 0.96, unitH * 0.96, unitD * 0.96),
+          new THREE.BoxGeometry(unitW * 0.96, normUnitH, unitD * 0.96),
         );
         const modEdges = this.track(new THREE.EdgesGeometry(modGeo));
 
@@ -718,7 +722,7 @@ export class BimSiteScene {
             for (let iy = 0; iy < ny; iy++) {
               const cx = -obj.w / 2 + (ix + 0.5) * unitW;
               const cz = -obj.d / 2 + (iz + 0.5) * unitD;
-              const cy = (iy + 0.5) * unitH;
+              const cy = (iy + 0.5) * normUnitH;
 
               const modMesh = new THREE.Mesh(modGeo, shellMaterial);
               modMesh.position.set(cx, cy, cz);
@@ -733,10 +737,7 @@ export class BimSiteScene {
             }
           }
         }
-        // Normalize shellGroup to unit height so scale.y = budPct works cleanly
-        shellGroup.scale.set(1, 1 / obj.h, 1);
       } else if (obj.typ === 'chimney') {
-        // Industrial tapered voxel chimney (normalized height 1.0)
         const cylGeo = this.track(new THREE.CylinderGeometry(0.32, 0.45, 1.0, 8));
         cylGeo.translate(0, 0.5, 0);
         const cylMesh = new THREE.Mesh(cylGeo, shellMaterial);
@@ -749,7 +750,6 @@ export class BimSiteScene {
         );
         cylMesh.add(edges);
 
-        // Plinth collar
         const baseGeo = this.track(new THREE.BoxGeometry(0.95, 0.14, 0.95));
         baseGeo.translate(0, 0.07, 0);
         const baseMesh = new THREE.Mesh(baseGeo, shellMaterial);
@@ -763,7 +763,6 @@ export class BimSiteScene {
         shellGroup.add(cylMesh, baseMesh);
         shellMeshes.push(cylMesh, baseMesh);
       } else {
-        // Standard architectural voxel building (normalized height 1.0)
         const boxGeo = this.track(new THREE.BoxGeometry(obj.w, 1.0, obj.d));
         boxGeo.translate(0, 0.5, 0);
         const boxMesh = new THREE.Mesh(boxGeo, shellMaterial);
@@ -782,34 +781,36 @@ export class BimSiteScene {
 
       dropGroup.add(shellGroup);
 
-      // Two adjacent interior columns at exact floor center:
-      // Blue = Technology (x = -0.25), Green = Electrical (x = +0.25), each 0.5 x 0.5 footprint
+      // Two adjacent interior columns at exact floor center (0.5 x 0.5 footprint each)
       const techColumn = new THREE.Mesh(colGeo, techMat);
-      techColumn.position.set(-0.25, 0, 0);
+      techColumn.position.set(-0.24, 0, 0);
       techColumn.castShadow = true;
 
       const elecColumn = new THREE.Mesh(colGeo, elecMat);
-      elecColumn.position.set(0.25, 0, 0);
+      elecColumn.position.set(0.24, 0, 0);
       elecColumn.castShadow = true;
 
-      dropGroup.add(techColumn, elecColumn);
+      if (!isOffice) {
+        dropGroup.add(techColumn, elecColumn);
+      }
 
-      // Simplified invisible hit proxy for reliable touch raycasting
       const hitGeo = this.track(
-        new THREE.BoxGeometry(Math.max(obj.w, 1.1), Math.max(obj.h, 1.0), Math.max(obj.d, 1.1)),
+        new THREE.BoxGeometry(
+          Math.max(obj.w, 1.1),
+          Math.max(obj.h, 0.9),
+          Math.max(obj.d, 1.1),
+        ),
       );
-      hitGeo.translate(0, Math.max(obj.h, 1.0) / 2, 0);
-      const hitMat = this.track(
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
+      hitGeo.translate(0, Math.max(obj.h, 0.9) / 2, 0);
+      const hitMat = this.track(new THREE.MeshBasicMaterial({ visible: false }));
       const hitBox = new THREE.Mesh(hitGeo, hitMat);
+      hitBox.userData.kind = 'building';
       hitBox.userData.objectId = obj.id;
       objRoot.add(hitBox);
       this.clickableMeshes.push(hitBox);
 
-      // Commissioning arrows & completion indicator above roof
       const indicatorGroup = new THREE.Group();
-      indicatorGroup.position.set(0, obj.h + 0.35, 0);
+      indicatorGroup.position.set(0, obj.h + 0.6, 0);
       const orangeArrow = this.createArrowMesh(0xf97316);
       const redArrow = this.createArrowMesh(0xef4444);
       const greenBeacon = this.createGreenBeacon();
@@ -828,6 +829,7 @@ export class BimSiteScene {
         shellGroup,
         shellMeshes,
         shellMaterial,
+        baseShellColor,
         edgeMaterial,
         techColumn,
         elecColumn,
@@ -839,8 +841,15 @@ export class BimSiteScene {
         redArrow,
         greenBeacon,
         wasStarted: false,
+        wasBudStarted: false,
+        wasTechStarted: false,
+        wasElecStarted: false,
         dropActive: false,
         dropElapsed: 0,
+        lastCommissioning: 'none',
+        arrowDropActive: false,
+        arrowDropElapsed: 0,
+        flashRemaining: 0,
         lastState: {
           budPct: 0,
           techPct: 0,
@@ -860,8 +869,19 @@ export class BimSiteScene {
     }
   }
 
+  public triggerOfficeAlarm(id: string) {
+    const entry = this.buildings.get(id);
+    if (!entry) return;
+    entry.flashRemaining = 1.0;
+  }
+
+  public triggerVehicleHorn(vehicleIndex: number) {
+    const v = this.vehicles[vehicleIndex];
+    if (!v) return;
+    v.hornFlashRemaining = 0.4;
+  }
+
   public setBuildingTransparency(transparencyPct: number) {
-    // transparencyPct: 0 = fully opaque walls, 100 = fully transparent X-ray walls
     const opacity = THREE.MathUtils.clamp(1 - transparencyPct / 100, 0, 1);
     this.currentOpacity = opacity;
     for (const entry of this.buildings.values()) {
@@ -874,16 +894,14 @@ export class BimSiteScene {
   public updateSchedule(
     currentMs: number,
     layers: LayerVisibility,
-    allowDropVibration: boolean,
+    allowDropFeedback: boolean,
   ) {
-    // 1. Fence
     const fencePct = calcRangeProgress(currentMs, this.data.teren.ogrodzenie.budowlane);
     for (const seg of this.fenceSegments) {
       seg.visible = fencePct > 0;
       seg.scale.y = Math.max(0.01, fencePct);
     }
 
-    // 2. Roads
     let roadsFinished = true;
     for (const road of this.data.teren.drogi) {
       if (currentMs <= parseDateMs(road.budowlane.koniec)) {
@@ -906,34 +924,74 @@ export class BimSiteScene {
       dash.visible = pct >= 0.85;
     }
 
-    // Vehicles appear after 2027-01-22 (once roads are built)
     const roadsBuiltAfterMs = parseDateMs('2027-01-22');
     this.vehicleGroup.visible = currentMs > roadsBuiltAfterMs && roadsFinished;
 
-    // 3. Buildings, containers, chimney, columns, indicators
     let triggeredAnyDrop = false;
+    let triggeredAnyWorkStart = false;
 
     for (const entry of this.buildings.values()) {
       const state = evaluateObjectState(entry.data, currentMs, this.data);
       entry.lastState = state;
 
-      // Detect start transition for drop-from-sky animation
+      // Track individual discipline starts for light chime
+      const budActive = state.budPct > 0;
+      const techActive = state.techPct > 0;
+      const elecActive = state.elecPct > 0;
+
+      if (
+        (budActive && !entry.wasBudStarted) ||
+        (techActive && !entry.wasTechStarted) ||
+        (elecActive && !entry.wasElecStarted)
+      ) {
+        triggeredAnyWorkStart = true;
+      }
+      entry.wasBudStarted = budActive;
+      entry.wasTechStarted = techActive;
+      entry.wasElecStarted = elecActive;
+
+      // Detect initial building appearance for drop-from-sky bounce
       if (state.hasStarted && !entry.wasStarted) {
         entry.wasStarted = true;
-        entry.dropActive = true;
-        entry.dropElapsed = 0;
-        entry.dropGroup.position.y = 7.0;
-        triggeredAnyDrop = true;
+        if (allowDropFeedback) {
+          entry.dropActive = true;
+          entry.dropElapsed = 0;
+          entry.dropGroup.position.y = 7.0;
+          triggeredAnyDrop = true;
+        } else {
+          entry.dropActive = false;
+          entry.dropGroup.position.y = 0;
+        }
       } else if (!state.hasStarted) {
         entry.wasStarted = false;
         entry.dropActive = false;
         entry.dropGroup.position.y = 0;
       }
 
-      entry.dropGroup.visible = state.hasStarted;
-      entry.footprintMesh.visible = !state.hasStarted || entry.data.id === this.selectedId;
+      // Detect commissioning arrow activation to smoothly drop from sky
+      if (state.commissioning !== entry.lastCommissioning) {
+        entry.lastCommissioning = state.commissioning;
+        if (
+          state.commissioning === 'rozruch_zimny' ||
+          state.commissioning === 'rozruch_goracy'
+        ) {
+          entry.arrowDropActive = true;
+          entry.arrowDropElapsed = 0;
+          entry.indicatorGroup.position.y = entry.data.h + 0.6 + 10.5;
+        } else {
+          entry.arrowDropActive = false;
+          entry.indicatorGroup.position.y = entry.data.h + 0.6;
+        }
+      }
 
-      // Outer shell (budowlane)
+      entry.root.visible =
+        state.hasStarted || !(entry.data.demontaz && currentMs >= parseDateMs(entry.data.demontaz));
+      entry.dropGroup.visible = state.hasStarted;
+      entry.footprintMesh.visible =
+        state.hasStarted
+          ? entry.data.id === this.selectedId
+          : !(entry.data.demontaz && currentMs >= parseDateMs(entry.data.demontaz));
+
       const showShell =
         layers.budowlane && state.budPct > 0 && this.currentOpacity > 0.015;
       for (const m of entry.shellMeshes) {
@@ -942,28 +1000,40 @@ export class BimSiteScene {
       entry.shellGroup.visible = layers.budowlane && state.budPct > 0;
       entry.shellGroup.scale.y = Math.max(0.005, state.budPct * entry.data.h);
 
-      // Technology column (blue)
-      entry.techColumn.visible = layers.technologia && state.techPct > 0;
-      entry.techColumn.scale.y = Math.max(0.005, state.techPct * entry.data.h);
+      // Strictly clamp interior columns <= building height h (minus 0.004 to prevent roof z-fighting/protrusion)
+      const maxColHeight = Math.max(0.01, entry.data.h - 0.004);
+      const isOffice = entry.data.id === 'BIURO';
 
-      // Electrical column (green)
-      entry.elecColumn.visible = layers.elektryka && state.elecPct > 0;
-      entry.elecColumn.scale.y = Math.max(0.005, state.elecPct * entry.data.h);
+      entry.techColumn.visible = !isOffice && layers.technologia && state.techPct > 0;
+      entry.techColumn.scale.y = Math.min(
+        maxColHeight,
+        Math.max(0.005, state.techPct * maxColHeight),
+      );
 
-      // Commissioning arrows & completion badge
+      entry.elecColumn.visible = !isOffice && layers.elektryka && state.elecPct > 0;
+      entry.elecColumn.scale.y = Math.min(
+        maxColHeight,
+        Math.max(0.005, state.elecPct * maxColHeight),
+      );
+
       entry.orangeArrow.visible = state.commissioning === 'rozruch_zimny';
       entry.redArrow.visible = state.commissioning === 'rozruch_goracy';
       entry.greenBeacon.visible = state.commissioning === 'zakonczenie';
     }
 
-    if (triggeredAnyDrop && allowDropVibration) {
-      this.onDropCallback?.();
+    if (allowDropFeedback) {
+      if (triggeredAnyDrop) {
+        this.onDropCallback?.();
+      }
+      if (triggeredAnyWorkStart) {
+        this.onWorkStartCallback?.();
+      }
     }
   }
 
   public tickAnimations(delta: number, elapsed: number) {
-    // 1. Animate drop-from-sky bounces
     for (const entry of this.buildings.values()) {
+      // 1. Building drop-from-sky bounce
       if (entry.dropActive) {
         entry.dropElapsed += delta;
         const duration = 0.58;
@@ -976,22 +1046,61 @@ export class BimSiteScene {
         }
       }
 
-      // Pulse & bob commissioning arrows
-      if (entry.orangeArrow.visible || entry.redArrow.visible || entry.greenBeacon.visible) {
-        const bob = Math.sin(elapsed * 4.2 + entry.data.x * 0.5) * 0.14;
-        const pulse = 1 + Math.sin(elapsed * 5.0 + entry.data.z) * 0.08;
-        entry.indicatorGroup.position.y = entry.data.h + 0.4 + bob;
-        entry.indicatorGroup.scale.setScalar(pulse);
-        if (entry.greenBeacon.visible) {
-          entry.greenBeacon.rotation.y = elapsed * 1.4;
+      // 2. BIURO 1-second bright red siren pulse
+      if (entry.flashRemaining > 0) {
+        entry.flashRemaining = Math.max(0, entry.flashRemaining - delta);
+        if (entry.flashRemaining > 0) {
+          const pulse = 0.55 + 0.45 * Math.sin(elapsed * 26);
+          entry.shellMaterial.color.setHex(0xff2424);
+          entry.shellMaterial.emissive.setHex(0xef4444);
+          entry.shellMaterial.emissiveIntensity = 0.45 + pulse * 0.75;
+        } else {
+          entry.shellMaterial.color.setHex(entry.baseShellColor);
+          entry.shellMaterial.emissive.setHex(0x000000);
+          entry.shellMaterial.emissiveIntensity = 0;
+        }
+      }
+
+      // 3. Commissioning arrows smooth descent from sky + hover pulse
+      if (
+        entry.orangeArrow.visible ||
+        entry.redArrow.visible ||
+        entry.greenBeacon.visible
+      ) {
+        if (entry.arrowDropActive) {
+          const arrowDropDuration = 1.35;
+          entry.arrowDropElapsed += delta;
+          const t = Math.min(1, entry.arrowDropElapsed / arrowDropDuration);
+          // Smooth cubic ease-out braking right above the roof
+          const eased = 1 - Math.pow(1 - t, 3);
+          entry.indicatorGroup.position.y =
+            entry.data.h + 0.6 + (1 - eased) * 10.5;
+          entry.indicatorGroup.scale.setScalar(1.0);
+          if (t >= 1) {
+            entry.arrowDropActive = false;
+          }
+        } else {
+          const bob = Math.sin(elapsed * 4.2 + entry.data.x * 0.5) * 0.14;
+          const pulse = 1 + Math.sin(elapsed * 5.0 + entry.data.z) * 0.08;
+          entry.indicatorGroup.position.y = entry.data.h + 0.6 + bob;
+          entry.indicatorGroup.scale.setScalar(pulse);
+          if (entry.greenBeacon.visible) {
+            entry.greenBeacon.rotation.y = elapsed * 1.4;
+          }
         }
       }
     }
 
-    // 2. Animate vehicles if roads are built
+    // 4. Vehicles movement + horn headlight flash
     if (this.vehicleGroup.visible) {
       for (const v of this.vehicles) {
         v.progress = (v.progress + delta * v.speed) % 1;
+
+        if (v.hornFlashRemaining > 0) {
+          v.hornFlashRemaining = Math.max(0, v.hornFlashRemaining - delta);
+          v.headLightMat.emissiveIntensity =
+            v.hornFlashRemaining > 0 ? 4.5 : 1.8;
+        }
 
         if (v.mode === 'municipal') {
           const zStart = v.direction === 1 ? -8.5 : 8.5;
@@ -1000,16 +1109,14 @@ export class BimSiteScene {
           v.group.position.set(18.0 + v.laneOffset, 0.25, z);
           v.group.rotation.y = v.direction === 1 ? 0 : Math.PI;
         } else if (v.mode === 'internal_spur') {
-          // Ping-pong along spur x: 11.5 <-> 17.5 at z = -1.5
           const ping = v.progress < 0.5 ? v.progress * 2 : (1 - v.progress) * 2;
           const goingEast = v.progress < 0.5;
           const x = THREE.MathUtils.lerp(11.5, 17.2, ping);
           v.group.position.set(x, 0.25, -1.5 + (goingEast ? 0.18 : -0.18));
           v.group.rotation.y = goingEast ? Math.PI / 2 : -Math.PI / 2;
         } else {
-          // Rectangular loop around DROGA_WEWNETRZNA
           const pts = this.loopWaypoints;
-          const totalLen = 20 + 8 + 20 + 8; // 56 units
+          const totalLen = 58;
           let dist = v.progress * totalLen;
           let segIdx = 0;
           const segLens = [21, 8, 21, 8];
@@ -1069,7 +1176,6 @@ export class BimSiteScene {
       entry.dropGroup.localToWorld(_projVec);
       _projVec.project(camera);
 
-      // Behind camera check
       if (_projVec.z > 1 || _projVec.z < -1) {
         target.visible = false;
         continue;

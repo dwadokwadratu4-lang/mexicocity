@@ -26,6 +26,18 @@ export interface AREngineCallbacks {
   onSelectObject: (id: string | null) => void;
   onLabelsUpdate: (labels: ScreenLabelCoord[]) => void;
   onObjectDrop: () => void;
+  onWorkStart: () => void;
+  onVehicleTap: () => void;
+  onOfficeTap: () => void;
+}
+
+function isHierarchyVisible(obj: THREE.Object3D): boolean {
+  let curr: THREE.Object3D | null = obj;
+  while (curr) {
+    if (!curr.visible) return false;
+    curr = curr.parent;
+  }
+  return true;
 }
 
 const _mat4 = new THREE.Matrix4();
@@ -190,9 +202,16 @@ export class AREngine {
     this.scene.add(this.previewRoot);
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    this.site = new BimSiteScene(this.data, maxAniso, () => {
-      this.callbacks.onObjectDrop();
-    });
+    this.site = new BimSiteScene(
+      this.data,
+      maxAniso,
+      () => {
+        this.callbacks.onObjectDrop();
+      },
+      () => {
+        this.callbacks.onWorkStart();
+      },
+    );
     this.site.setBuildingTransparency(initialTransparency);
     this.site.updateSchedule(this.currentMs, this.layers, false);
 
@@ -239,13 +258,27 @@ export class AREngine {
     _pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
     _raycaster.setFromCamera(_pointerNdc, activeCamera);
-    const hits = _raycaster.intersectObjects(this.site.clickableMeshes, false);
+    const hits = _raycaster
+      .intersectObjects(this.site.clickableMeshes, false)
+      .filter((hit) => isHierarchyVisible(hit.object));
 
     if (hits.length > 0) {
-      const objectId = hits[0].object.userData.objectId as string | undefined;
+      const hitObj = hits[0].object;
+      if (hitObj.userData.kind === 'vehicle') {
+        const vIdx = hitObj.userData.vehicleIndex as number;
+        this.site.triggerVehicleHorn(vIdx);
+        this.callbacks.onVehicleTap();
+        return;
+      }
+
+      const objectId = hitObj.userData.objectId as string | undefined;
       if (objectId) {
         this.site.setSelectedObject(objectId);
         this.callbacks.onSelectObject(objectId);
+        if (objectId === 'BIURO') {
+          this.site.triggerOfficeAlarm('BIURO');
+          this.callbacks.onOfficeTap();
+        }
         return;
       }
     }
@@ -472,6 +505,10 @@ export class AREngine {
 
   public selectObject(id: string | null) {
     this.site.setSelectedObject(id);
+  }
+
+  public triggerOfficeAlarm(id: string) {
+    this.site.triggerOfficeAlarm(id);
   }
 
   private afterDraw(cb: () => void) {

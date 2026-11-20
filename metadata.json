@@ -1,0 +1,6 @@
+{
+  "name": "WebAR 4D BIM | Artur Wierzbicki",
+  "description": "Mobilna aplikacja prezentacyjna WebAR 4D BIM z lokalnym śledzeniem znacznika HIRO i interaktywnym harmonogramem budowy.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

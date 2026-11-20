@@ -251,3 +251,17 @@
       "typ": "building",
       "x": -12.0, "z": 1.5, "w": 1.0, "d": 1.0, "h": 2.0,
       "budowlane": { "start": "2029-01-22", "koniec": "2029-02-26" },
+      "technologiczne": { "start": "2029-02-27", "koniec": "2029-04-20" },
+      "elektryczne": { "start": "2029-01-25", "koniec": "2029-06-17" }
+    },
+    {
+      "id": "BIURO",
+      "typ": "container",
+      "x": 13.2, "z": 3.0, "w": 2.0, "d": 1.0, "h": 0.5,
+      "budowlane": { "start": "2028-09-22", "koniec": "2028-09-22" },
+      "technologiczne": { "start": "2028-09-22", "koniec": "2028-09-22" },
+      "elektryczne": { "start": "2028-09-22", "koniec": "2028-09-22" },
+      "demontaz": "2030-03-08"
+    }
+  ]
+}

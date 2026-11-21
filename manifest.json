@@ -1,0 +1,16 @@
+{
+  "name": "MexicoCity | Artur Wierzbicki",
+  "short_name": "MexicoCity",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b101b",
+  "theme_color": "#0b101b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

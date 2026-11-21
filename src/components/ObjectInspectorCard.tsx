@@ -15,7 +15,9 @@ interface ObjectInspectorCardProps {
 }
 
 function getTypeLabel(object: BimObject): string {
-  if (object.id === 'BIURO') return 'Kontener - Biuro Budowy';
+  if (object.id === 'TAQUERIA' || object.id === 'BIURO') {
+    return 'Zaplecze gastronomiczne';
+  }
   if (object.typ === 'container') return 'Moduł kontenerowy';
   if (object.typ === 'chimney') return 'Obiekt pionowy';
   return 'Obiekt kubaturowy';
@@ -25,10 +27,10 @@ function getCommissioningLabel(
   object: BimObject,
   state: ObjectProgressState,
 ): { text: string; toneClass: string } {
-  if (object.id === 'BIURO') {
+  if (object.id === 'TAQUERIA' || object.id === 'BIURO') {
     return {
-      text: `Zaplecze tymczasowe (do ${object.demontaz ?? '2028-03-08'})`,
-      toneClass: 'text-sky-300',
+      text: 'Czynne cały okres budowy',
+      toneClass: 'text-amber-300',
     };
   }
   switch (state.commissioning) {
@@ -66,7 +68,7 @@ export function ObjectInspectorCard({
   onToggleElecAcceptance,
   onClose,
 }: ObjectInspectorCardProps) {
-  const isOffice = object.id === 'BIURO';
+  const isTaqueria = object.id === 'TAQUERIA' || object.id === 'BIURO';
   const budPercent = Math.round(state.budPct * 100);
   const techPercent = Math.round(state.techPct * 100);
   const elecPercent = Math.round(state.elecPct * 100);
@@ -109,12 +111,10 @@ export function ObjectInspectorCard({
         </button>
       </div>
 
-      {isOffice ? (
-        <div className="pt-2.5 text-xs text-slate-300 leading-relaxed">
-          Kontener modułowy dostępny na placu budowy od{' '}
-          <span className="font-mono tabular-nums text-white">2026-09-22</span>{' '}
-          do demontażu przed Rozruchem Gorącym (
-          <span className="font-mono tabular-nums text-white">2028-03-08</span>).
+      {isTaqueria ? (
+        <div className="pt-2.5 text-xs text-amber-100/90 leading-relaxed">
+          Klimatyczne zaplecze gastronomiczne placu budowy ze zbiornikiem Tinaco na dachu,
+          serwujące ciepłe posiłki i przekąski dla zespołu przez cały okres realizacji inwestycji.
         </div>
       ) : (
         <>

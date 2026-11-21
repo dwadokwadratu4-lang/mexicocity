@@ -28,7 +28,9 @@ export interface AREngineCallbacks {
   onObjectDrop: () => void;
   onWorkStart: () => void;
   onVehicleTap: () => void;
-  onOfficeTap: () => void;
+  onTaqueriaTap: () => void;
+  onUfoFlyby: () => void;
+  onSantaTap: () => void;
 }
 
 function isHierarchyVisible(obj: THREE.Object3D): boolean {
@@ -46,6 +48,11 @@ const _targetQuat = new THREE.Quaternion();
 const _targetScale = new THREE.Vector3();
 const _pointerNdc = new THREE.Vector2();
 const _raycaster = new THREE.Raycaster();
+
+function parseIsoMs(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Date.UTC(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
+}
 
 function detectSoftwareWebGL(): boolean {
   try {
@@ -66,6 +73,8 @@ export class AREngine {
   private readonly videoEl: HTMLVideoElement;
   private readonly callbacks: AREngineCallbacks;
   private readonly data: HarmonogramData;
+  private readonly scheduleStartMs: number;
+  private readonly scheduleEndMs: number;
 
   private readonly isSoftwareGl: boolean;
   private readonly renderer: THREE.WebGLRenderer;
@@ -89,6 +98,9 @@ export class AREngine {
   private viewMode: ViewMode = 'ar';
   private isLockedOnTable = false;
   private currentMs: number;
+  private lastProgress = 0;
+  private ufoTriggered35 = false;
+  private ufoTriggered80 = false;
   private layers: LayerVisibility;
   private labelsBuffer: ScreenLabelCoord[] = [];
 
@@ -109,6 +121,11 @@ export class AREngine {
     this.container = container;
     this.videoEl = videoEl;
     this.data = data;
+    this.scheduleStartMs = parseIsoMs(data.projekt.dataStart);
+    this.scheduleEndMs = Math.max(
+      this.scheduleStartMs + 1,
+      parseIsoMs(data.projekt.dataKoniec),
+    );
     this.currentMs = initialDateMs;
     this.layers = { ...initialLayers };
     this.callbacks = callbacks;
@@ -122,7 +139,7 @@ export class AREngine {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = 1.1;
     this.renderer.setPixelRatio(
       this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2),
     );
@@ -145,11 +162,11 @@ export class AREngine {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
 
-    // 3-point outdoor/studio lighting rig
-    const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x57534e, 0.95);
+    // Warm Mexican golden-hour lighting rig (subtle sepia/amber sun + terracotta bounce)
+    const hemiLight = new THREE.HemisphereLight(0xffe6b8, 0x7c5338, 0.98);
     this.scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff5e4, 1.55);
+    const keyLight = new THREE.DirectionalLight(0xffcf82, 1.65);
     keyLight.position.set(16, 28, 18);
     keyLight.castShadow = !this.isSoftwareGl;
     keyLight.shadow.mapSize.set(1024, 1024);
@@ -164,7 +181,7 @@ export class AREngine {
     keyLight.shadow.normalBias = 0.02;
     this.scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0xbae6fd, 0.45);
+    const rimLight = new THREE.DirectionalLight(0xfdba74, 0.44);
     rimLight.position.set(-18, 12, -16);
     this.scene.add(rimLight);
 
@@ -249,7 +266,7 @@ export class AREngine {
     const dx = e.clientX - this.pointerDownPos.x;
     const dy = e.clientY - this.pointerDownPos.y;
     this.pointerDownPos = null;
-    if (Math.hypot(dx, dy) > 12) return; // Dragged, not tapped
+    if (Math.hypot(dx, dy) > 12) return;
 
     const activeCamera =
       this.viewMode === 'ar' ? this.arCamera : this.previewCamera;
@@ -271,13 +288,19 @@ export class AREngine {
         return;
       }
 
+      if (hitObj.userData.kind === 'santa_harley') {
+        this.site.triggerSantaTap();
+        this.callbacks.onSantaTap();
+        return;
+      }
+
       const objectId = hitObj.userData.objectId as string | undefined;
       if (objectId) {
         this.site.setSelectedObject(objectId);
         this.callbacks.onSelectObject(objectId);
-        if (objectId === 'BIURO') {
-          this.site.triggerOfficeAlarm('BIURO');
-          this.callbacks.onOfficeTap();
+        if (objectId === 'TAQUERIA' || objectId === 'BIURO') {
+          this.site.triggerTaqueriaCelebration(objectId);
+          this.callbacks.onTaqueriaTap();
         }
         return;
       }
@@ -300,7 +323,6 @@ export class AREngine {
       return;
     }
 
-    // AR mode: keep video & WebGL canvas synced to cover viewport with exact camera aspect
     const vidW = this.videoEl.videoWidth || 640;
     const vidH = this.videoEl.videoHeight || 480;
     const scale = Math.max(vw / vidW, vh / vidH);
@@ -370,7 +392,6 @@ export class AREngine {
         return;
       }
 
-      // Adaptive threshold mode handles changing office/outdoor illumination well
       if (
         controller.artoolkit?.AR_LABELING_THRESH_MODE_AUTO_MEDIAN !== undefined
       ) {
@@ -445,8 +466,9 @@ export class AREngine {
       this.previewRoot.add(this.site.root);
       this.previewRoot.visible = true;
       this.markerRoot.visible = false;
-      this.scene.background = new THREE.Color(0x0f172a);
-      this.scene.fog = new THREE.FogExp2(0x0f172a, 0.011);
+      // Warm Mexican dusk/amber atmosphere in 3D view
+      this.scene.background = new THREE.Color(0x281a14);
+      this.scene.fog = new THREE.FogExp2(0x281a14, 0.011);
       this.callbacks.onStatusChange('preview_3d');
     } else {
       this.orbitControls.enabled = false;
@@ -471,7 +493,6 @@ export class AREngine {
     this.isLockedOnTable = locked;
     if (this.viewMode === 'ar') {
       if (locked) {
-        // If user locks before marker was ever seen, place a centered fallback pose in front of camera
         if (!this.markerRoot.visible) {
           this.markerRoot.position.set(0, -0.25, -2.1);
           this.markerRoot.quaternion.setFromEuler(
@@ -491,6 +512,27 @@ export class AREngine {
   public setScheduleDate(dateMs: number, allowDropVibration: boolean) {
     this.currentMs = dateMs;
     this.site.updateSchedule(dateMs, this.layers, allowDropVibration);
+
+    const progress = THREE.MathUtils.clamp(
+      (dateMs - this.scheduleStartMs) / (this.scheduleEndMs - this.scheduleStartMs),
+      0,
+      1,
+    );
+
+    if (progress < 0.3) this.ufoTriggered35 = false;
+    if (progress < 0.75) this.ufoTriggered80 = false;
+
+    if (this.lastProgress < 0.35 && progress >= 0.35 && !this.ufoTriggered35) {
+      this.ufoTriggered35 = true;
+      this.site.triggerUfoFlyby(false);
+      this.callbacks.onUfoFlyby();
+    } else if (this.lastProgress < 0.8 && progress >= 0.8 && !this.ufoTriggered80) {
+      this.ufoTriggered80 = true;
+      this.site.triggerUfoFlyby(true);
+      this.callbacks.onUfoFlyby();
+    }
+
+    this.lastProgress = progress;
   }
 
   public setLayers(layers: LayerVisibility) {
@@ -507,8 +549,8 @@ export class AREngine {
     this.site.setSelectedObject(id);
   }
 
-  public triggerOfficeAlarm(id: string) {
-    this.site.triggerOfficeAlarm(id);
+  public triggerTaqueriaCelebration(id: string) {
+    this.site.triggerTaqueriaCelebration(id);
   }
 
   private afterDraw(cb: () => void) {

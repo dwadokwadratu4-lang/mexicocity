@@ -53,7 +53,7 @@ export function evaluateObjectState(
   const overallPct = (budPct + techPct + elecPct) / 3;
   const hasStarted = budPct > 0 || techPct > 0 || elecPct > 0;
 
-  if (obj.id === 'BIURO') {
+  if (obj.id === 'TAQUERIA' || obj.id === 'BIURO') {
     return {
       budPct,
       techPct,
@@ -102,6 +102,22 @@ export function evaluateObjectState(
   };
 }
 
+/**
+ * CDMX Jacaranda trees bloom in February (02), March (03), and April (04) each year.
+ */
+export function isJacarandaBloomSeason(currentMs: number): boolean {
+  const month = new Date(currentMs).getUTCMonth() + 1; // 1..12
+  return month === 2 || month === 3 || month === 4;
+}
+
+/**
+ * Holiday / Christmas season in December (12) and January (01) each year.
+ */
+export function isHolidaySeason(currentMs: number): boolean {
+  const month = new Date(currentMs).getUTCMonth() + 1; // 1..12
+  return month === 12 || month === 1;
+}
+
 export function getMilestoneDates(data: HarmonogramData) {
   return [
     { id: 'start', label: 'Start', date: data.projekt.dataStart },
@@ -111,7 +127,7 @@ export function getMilestoneDates(data: HarmonogramData) {
       label: 'Rozruch Gorący',
       date: data.projekt.etapyGlobalne.rozruchGoracy.start,
     },
-    { id: 'end', label: 'Koniec', date: data.projekt.dataKoniec },
+    { id: 'end', label: 'FIESTA', date: data.projekt.dataKoniec },
   ] as const;
 }
 
@@ -120,7 +136,7 @@ export function getGlobalPhaseLabel(currentMs: number, data: HarmonogramData): s
   const handoverStart = parseDateMs(data.projekt.etapyGlobalne.przekazanie.start);
   const endMs = parseDateMs(data.projekt.etapyGlobalne.zakonczenie.start);
 
-  if (currentMs >= endMs) return 'Zakończenie inwestycji';
+  if (currentMs >= endMs) return 'FIESTA (Zakończenie)';
   if (currentMs >= handoverStart) return 'Przekazanie do eksploatacji';
   if (currentMs >= hotStart) return 'Rozruch Gorący';
   return 'Realizacja robót';

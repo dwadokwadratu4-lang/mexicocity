@@ -120,8 +120,16 @@ export default function App() {
     soundRef.current?.playCarHorn();
   }, []);
 
-  const handleOfficeTap = useCallback(() => {
-    soundRef.current?.playPoliceSiren();
+  const handleTaqueriaTap = useCallback(() => {
+    soundRef.current?.playMariachiFanfare();
+  }, []);
+
+  const handleUfoFlyby = useCallback(() => {
+    soundRef.current?.playUfoTheremin();
+  }, []);
+
+  const handleSantaTap = useCallback(() => {
+    soundRef.current?.playSantaHarley();
   }, []);
 
   const handleLabelsUpdate = useCallback((coords: ScreenLabelCoord[]) => {
@@ -139,7 +147,10 @@ export default function App() {
       el.style.pointerEvents = 'auto';
       el.style.transform = `translate3d(${c.x.toFixed(1)}px, ${c.y.toFixed(1)}px, 0) translate(-50%, -110%)`;
       if (txt) {
-        txt.textContent = c.id === 'BIURO' ? 'BIURO' : `${c.id} · ${c.overallPct}%`;
+        txt.textContent =
+          c.id === 'TAQUERIA' || c.id === 'BIURO'
+            ? c.id
+            : `${c.id} · ${c.overallPct}%`;
       }
     }
   }, []);
@@ -172,7 +183,9 @@ export default function App() {
         onObjectDrop: handleObjectDrop,
         onWorkStart: handleWorkStart,
         onVehicleTap: handleVehicleTap,
-        onOfficeTap: handleOfficeTap,
+        onTaqueriaTap: handleTaqueriaTap,
+        onUfoFlyby: handleUfoFlyby,
+        onSantaTap: handleSantaTap,
       },
     );
 
@@ -187,7 +200,9 @@ export default function App() {
     handleObjectDrop,
     handleWorkStart,
     handleVehicleTap,
-    handleOfficeTap,
+    handleTaqueriaTap,
+    handleUfoFlyby,
+    handleSantaTap,
   ]);
 
   // 3. Sync schedule date to 3D scene
@@ -257,9 +272,9 @@ export default function App() {
     soundRef.current?.unlock();
     setSelectedObjectId(id);
     engineRef.current?.selectObject(id);
-    if (id === 'BIURO') {
-      engineRef.current?.triggerOfficeAlarm('BIURO');
-      soundRef.current?.playPoliceSiren();
+    if (id === 'TAQUERIA' || id === 'BIURO') {
+      engineRef.current?.triggerTaqueriaCelebration(id);
+      soundRef.current?.playMariachiFanfare();
     }
   };
 
@@ -342,6 +357,12 @@ export default function App() {
         className="absolute inset-0 overflow-hidden"
       />
 
+      {/* Subtle warm Mexican golden-sepia cinematic atmosphere filter */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 z-[5] pointer-events-none bg-gradient-to-b from-amber-500/[0.06] via-orange-400/[0.04] to-amber-700/[0.08]"
+      />
+
       {/* Top Bar */}
       <TopBar
         currentDateStr={currentDateStr}
@@ -367,8 +388,8 @@ export default function App() {
               className={`absolute top-0 left-0 px-2 py-1 rounded-lg border text-[11px] font-mono tabular-nums font-semibold shadow-md transition-opacity duration-75 whitespace-nowrap ${
                 selectedObjectId === obj.id
                   ? 'bg-amber-500 border-white text-slate-950'
-                  : obj.id === 'BIURO'
-                    ? 'bg-sky-950/90 border-sky-400/60 text-sky-100 hover:border-amber-400'
+                  : obj.id === 'TAQUERIA' || obj.id === 'BIURO'
+                    ? 'bg-orange-950/90 border-amber-400/70 text-amber-100 hover:border-amber-300'
                     : 'bg-slate-950/90 border-white/25 text-white hover:border-amber-400'
               }`}
             >
@@ -377,7 +398,9 @@ export default function App() {
                   labelTextRefs.current[obj.id] = el;
                 }}
               >
-                {obj.id === 'BIURO' ? 'BIURO' : `${obj.id} · 0%`}
+                {obj.id === 'TAQUERIA' || obj.id === 'BIURO'
+                  ? obj.id
+                  : `${obj.id} · 0%`}
               </span>
             </button>
           ))}

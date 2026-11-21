@@ -21,8 +21,8 @@ export function TopBar({
   return (
     <header className="fixed top-0 left-0 right-0 z-30 h-13 px-3 sm:px-5 bg-slate-950/92 border-b border-white/10 flex items-center justify-between gap-2">
       <div className="min-w-0 flex items-center gap-2 sm:gap-3">
-        <span className="text-xs sm:text-sm font-semibold tracking-tight text-slate-100 truncate">
-          WebAR 4D BIM | Artur Wierzbicki
+        <span className="text-xs sm:text-sm font-semibold tracking-tight text-amber-100 truncate">
+          MexicoCity | Artur Wierzbicki
         </span>
         <span className="text-slate-600 hidden xs:inline" aria-hidden="true">
           ·
